@@ -62,6 +62,9 @@ jobs:
     name: Index and upload channel
     needs: build
     runs-on: ubuntu-latest
+    outputs:
+      artifact-id: ${{ steps.upload-channel.outputs.artifact-id }}
+      artifact-url: ${{ steps.upload-channel.outputs.artifact-url }}
     steps:
       - uses: actions/checkout@v4
 
@@ -97,11 +100,49 @@ jobs:
           find channel -maxdepth 3 -type f -print | sort
 
       - name: Upload indexed channel root
+        id: upload-channel
         uses: actions/upload-artifact@v4
         with:
           name: conda-channel
           path: channel
           if-no-files-found: error
+
+  direct-artifact-negative-probe:
+    name: Direct artifact URL negative probe
+    needs: index-and-upload
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: prefix-dev/setup-pixi@v0.9.0
+        with:
+          pixi-version: v0.69.0
+          run-install: true
+
+      - name: Show artifact URLs
+        shell: bash
+        run: |
+          echo "artifact-url=${{ needs.index-and-upload.outputs.artifact-url }}"
+          echo "artifact-api-zip=https://api.github.com/repos/${{ github.repository }}/actions/artifacts/${{ needs.index-and-upload.outputs.artifact-id }}/zip"
+
+      - name: Prove artifact zip URL is not a conda channel
+        shell: bash
+        run: |
+          set -euxo pipefail
+          artifact_api_zip="https://api.github.com/repos/${{ github.repository }}/actions/artifacts/${{ needs.index-and-upload.outputs.artifact-id }}/zip"
+          set +e
+          pixi run rattler create \
+            --prefix direct-artifact-env \
+            --channel "${artifact_api_zip}" \
+            --channel conda-forge \
+            artifact-channel-probe 2>&1 | tee direct-artifact.log
+          status=${PIPESTATUS[0]}
+          set -e
+          if [ "${status}" -eq 0 ]; then
+            echo "Unexpected success: the artifact zip URL behaved like a conda channel."
+            exit 1
+          fi
+          grep -E "failed to load repodata|zip/.*/repodata\\.json|could not find subdir" direct-artifact.log
 
   verify:
     name: Verify ${{ matrix.target }}
