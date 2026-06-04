@@ -1,0 +1,147 @@
+name: channel-artifact
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: linux-64
+            runner: ubuntu-latest
+          - target: osx-arm64
+            runner: macos-latest
+          - target: win-64
+            runner: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: prefix-dev/setup-pixi@v0.9.0
+        with:
+          pixi-version: v0.69.0
+          run-install: true
+
+      - name: Build package
+        shell: bash
+        run: |
+          set -euxo pipefail
+          pixi run rattler-build build \
+            --recipe recipe \
+            --output-dir output \
+            --channel conda-forge \
+            --target-platform "${{ matrix.target }}" \
+            --test native \
+            --package-format conda \
+            --log-style plain
+
+      - name: Stage package artifact
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p package
+          cp output/${{ matrix.target }}/*.conda package/
+          ls -la package
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: package-${{ matrix.target }}
+          path: package/*.conda
+          if-no-files-found: error
+
+  index-and-upload:
+    name: Index and upload channel
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: prefix-dev/setup-pixi@v0.9.0
+        with:
+          pixi-version: v0.69.0
+          run-install: true
+
+      - name: Download built packages into channel subdirs
+        uses: actions/download-artifact@v4
+        with:
+          name: package-linux-64
+          path: channel/linux-64
+
+      - name: Download macOS package into channel subdir
+        uses: actions/download-artifact@v4
+        with:
+          name: package-osx-arm64
+          path: channel/osx-arm64
+
+      - name: Download Windows package into channel subdir
+        uses: actions/download-artifact@v4
+        with:
+          name: package-win-64
+          path: channel/win-64
+
+      - name: Index channel
+        shell: bash
+        run: |
+          set -euxo pipefail
+          find channel -maxdepth 3 -type f -print | sort
+          pixi run rattler-index fs --force channel
+          find channel -maxdepth 3 -type f -print | sort
+
+      - name: Upload indexed channel root
+        uses: actions/upload-artifact@v4
+        with:
+          name: conda-channel
+          path: channel
+          if-no-files-found: error
+
+  verify:
+    name: Verify ${{ matrix.target }}
+    needs: index-and-upload
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: linux-64
+            runner: ubuntu-latest
+          - target: osx-arm64
+            runner: macos-latest
+          - target: win-64
+            runner: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: prefix-dev/setup-pixi@v0.9.0
+        with:
+          pixi-version: v0.69.0
+          run-install: true
+
+      - name: Download final channel artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: conda-channel
+          path: downloaded-channel
+
+      - name: Inspect downloaded layout
+        shell: bash
+        run: |
+          set -euxo pipefail
+          find downloaded-channel -maxdepth 3 -type f -print | sort
+          test -f downloaded-channel/${{ matrix.target }}/repodata.json
+          test -f downloaded-channel/noarch/repodata.json
+
+      - name: Install and run probe from downloaded channel
+        shell: bash
+        run: |
+          set -euxo pipefail
+          pixi run rattler create \
+            --prefix probe-env \
+            --channel ./downloaded-channel \
+            --channel conda-forge \
+            artifact-channel-probe
+          pixi run rattler run --prefix probe-env artifact-channel-probe

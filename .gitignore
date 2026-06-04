@@ -1,0 +1,6 @@
+output/
+channel/
+downloaded-channel/
+probe-env/
+.pixi/
+*.log

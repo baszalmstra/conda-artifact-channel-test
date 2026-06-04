@@ -1,0 +1,21 @@
+package:
+  name: artifact-channel-probe
+  version: 0.1.0
+
+build:
+  number: 0
+  script:
+    file: build
+
+requirements:
+  build:
+    - ${{ compiler('c') }}
+
+tests:
+  - script:
+      - artifact-channel-probe
+
+about:
+  homepage: https://github.com/baszalmstra/conda-artifact-channel-test
+  license: MIT
+  summary: Tiny compiled probe for testing GitHub artifact preservation of conda channel layouts.
