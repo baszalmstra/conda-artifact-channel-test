@@ -217,7 +217,7 @@ jobs:
           cd oci-pixi-test
           cat > pixi.toml <<EOF
           [workspace]
-          channels = ["${{ needs.push-oci-channel.outputs.fake-channel }}"]
+          channels = ["${{ needs.push-oci-channel.outputs.fake-channel }}", "conda-forge"]
           platforms = ["${{ matrix.target }}"]
 
           [dependencies]
