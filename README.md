@@ -5,3 +5,10 @@ Experiment: build a tiny platform-specific conda package with `rattler-build` on
 The first verification proves the channel layout is preserved after extracting/downloading the artifact: the verification job can install `artifact-channel-probe` from the downloaded artifact channel and execute the compiled binary.
 
 The direct-access probe tests the stronger goal: using the GitHub artifact URL itself as a conda channel without downloading/extracting the full channel first. At the time of this experiment, GitHub Actions artifact URLs expose a single ZIP archive, not per-file URLs like `/linux-64/repodata.json`, so this direct probe is expected to fail.
+
+The GHCR OCI probe publishes the same indexed channel to GHCR using the conda OCI layout understood by pixi's OCI mirror support:
+
+- `repodata.json` and `repodata.json.zst` are pushed as layers on `<base>/<subdir>/repodata.json:latest`.
+- Each `.conda` package is pushed as a layer on `<base>/<subdir>/<package-name>:<version>-<build>`.
+
+Verification uses a fake HTTP channel mirrored to the `oci://ghcr.io/...` base in `.pixi/config.toml`, with sharded repodata disabled so pixi falls back to `repodata.json`.

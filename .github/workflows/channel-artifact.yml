@@ -5,6 +5,10 @@ on:
     branches: [main]
   workflow_dispatch:
 
+permissions:
+  contents: read
+  packages: write
+
 jobs:
   build:
     name: Build ${{ matrix.target }}
@@ -106,6 +110,129 @@ jobs:
           name: conda-channel
           path: channel
           if-no-files-found: error
+
+  push-oci-channel:
+    name: Push channel to GHCR OCI
+    needs: index-and-upload
+    runs-on: ubuntu-latest
+    outputs:
+      oci-base: ${{ steps.push.outputs.oci-base }}
+      fake-channel: ${{ steps.push.outputs.fake-channel }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: prefix-dev/setup-pixi@v0.9.0
+        with:
+          pixi-version: v0.69.0
+          run-install: true
+
+      - name: Download final channel artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: conda-channel
+          path: channel
+
+      - name: Push OCI artifacts
+        id: push
+        shell: bash
+        env:
+          GHCR_TOKEN: ${{ github.token }}
+        run: |
+          set -euxo pipefail
+          shopt -s nullglob
+
+          oci_base="ghcr.io/${{ github.repository_owner }}/${{ github.event.repository.name }}-channel"
+          fake_channel="https://artifact-channel.invalid/${{ github.event.repository.name }}"
+          echo "oci-base=oci://${oci_base}" >> "$GITHUB_OUTPUT"
+          echo "fake-channel=${fake_channel}" >> "$GITHUB_OUTPUT"
+
+          echo "${GHCR_TOKEN}" | pixi run oras login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+          push_repodata() {
+            local subdir="$1"
+            local ref="${oci_base}/${subdir}/repodata.json:latest"
+            local layers=()
+            if [[ -f "channel/${subdir}/repodata.json" ]]; then
+              layers+=("channel/${subdir}/repodata.json:application/vnd.conda.repodata.v1+json")
+            fi
+            if [[ -f "channel/${subdir}/repodata.json.zst" ]]; then
+              layers+=("channel/${subdir}/repodata.json.zst:application/vnd.conda.repodata.v1+json+zst")
+            fi
+            if [[ ${#layers[@]} -gt 0 ]]; then
+              pixi run oras push "${ref}" "${layers[@]}"
+            fi
+          }
+
+          push_packages() {
+            local subdir="$1"
+            for pkg in channel/${subdir}/*.conda; do
+              local filename stem build rest version name tag ref
+              filename="$(basename "${pkg}")"
+              stem="${filename%.conda}"
+              build="${stem##*-}"
+              rest="${stem%-*}"
+              version="${rest##*-}"
+              name="${rest%-*}"
+              tag="${version}-${build}"
+              tag="${tag//+/__p__}"
+              tag="${tag//!/__e__}"
+              tag="${tag//=/__eq__}"
+              ref="${oci_base}/${subdir}/${name}:${tag}"
+              pixi run oras push "${ref}" "${pkg}:application/vnd.conda.package.v2"
+            done
+          }
+
+          for subdir in noarch linux-64 osx-arm64 win-64; do
+            push_repodata "${subdir}"
+            push_packages "${subdir}"
+          done
+
+  verify-oci:
+    name: Verify OCI ${{ matrix.target }}
+    needs: push-oci-channel
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: linux-64
+            runner: ubuntu-latest
+          - target: osx-arm64
+            runner: macos-latest
+          - target: win-64
+            runner: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: prefix-dev/setup-pixi@v0.9.0
+        with:
+          pixi-version: v0.69.0
+          run-install: true
+
+      - name: Install and run probe from GHCR OCI mirror
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir oci-pixi-test
+          cd oci-pixi-test
+          cat > pixi.toml <<EOF
+          [workspace]
+          channels = ["${{ needs.push-oci-channel.outputs.fake-channel }}"]
+          platforms = ["${{ matrix.target }}"]
+
+          [dependencies]
+          artifact-channel-probe = "*"
+          EOF
+          mkdir -p .pixi
+          cat > .pixi/config.toml <<EOF
+          [repodata-config]
+          disable-sharded = true
+
+          [mirrors]
+          "${{ needs.push-oci-channel.outputs.fake-channel }}" = ["${{ needs.push-oci-channel.outputs.oci-base }}"]
+          EOF
+          pixi install
+          pixi run artifact-channel-probe
 
   direct-artifact-negative-probe:
     name: Direct artifact URL negative probe

@@ -6,3 +6,4 @@ platforms = ["linux-64", "osx-arm64", "win-64"]
 rattler = ">=0.1.15,<0.2"
 rattler-build = ">=0.64.1,<0.65"
 rattler-index = ">=0.30.3,<0.31"
+oras = ">=1.2.3,<2"
