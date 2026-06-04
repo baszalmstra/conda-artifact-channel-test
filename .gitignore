@@ -1,6 +1,9 @@
 output/
 channel/
 downloaded-channel/
+downloaded-gh-artifact/
+downloaded-probe-env/
+direct-artifact-env/
 probe-env/
 .pixi/
 *.log
