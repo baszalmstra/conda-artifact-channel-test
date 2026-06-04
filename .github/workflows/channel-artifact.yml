@@ -15,10 +15,13 @@ jobs:
         include:
           - target: linux-64
             runner: ubuntu-latest
+            c_compiler: gcc
           - target: osx-arm64
             runner: macos-latest
+            c_compiler: clang
           - target: win-64
             runner: windows-latest
+            c_compiler: vs2026
     steps:
       - uses: actions/checkout@v4
 
@@ -36,6 +39,7 @@ jobs:
             --output-dir output \
             --channel conda-forge \
             --target-platform "${{ matrix.target }}" \
+            --variant "c_compiler=${{ matrix.c_compiler }}" \
             --test native \
             --package-format conda \
             --log-style plain
